@@ -3,6 +3,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <sqlite3.h>
 
 #define DEFAULT_IP "192.168.86.129"// 服务器ip
 #define DEFAULT_PORT 56789 // 服务器监听端口
@@ -135,6 +136,40 @@ int main() {
     char *data;
     GPGGAData gpgga;
 
+    // 打开数据库连接
+    sqlite3 *db;
+    int rc = sqlite3_open_v2("gps_data.db", &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "无法打开数据库: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        exit(EXIT_FAILURE);
+    }
+
+    // 创建表格
+    const char *createTableSQL = "CREATE TABLE IF NOT EXISTS gps_data ("
+                                 "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                                 "utc_time TEXT,"
+                                 "latitude TEXT,"
+                                 "latitude_hemisphere TEXT,"
+                                 "longitude TEXT,"
+                                 "longitude_hemisphere TEXT,"
+                                 "gps_status INTEGER,"
+                                 "satellites_used TEXT,"
+                                 "hdop REAL,"
+                                 "altitude REAL,"
+                                 "geoid_height REAL,"
+                                 "differential_time REAL,"
+                                 "differential_station_id TEXT"
+                                 ");";
+
+    rc = sqlite3_exec(db, createTableSQL, 0, 0, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "无法创建表格: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        exit(EXIT_FAILURE);
+    }
+
+
     // 创建套接字
     int server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket == -1) {
@@ -178,6 +213,24 @@ int main() {
 
         parseGPGGA(buffer,&gpgga);
         printGPGGA(&gpgga);
+
+        //插入数据库
+        char insertSQL[512];
+        snprintf(insertSQL, sizeof(insertSQL),
+                 "INSERT INTO gps_data (utc_time, latitude, latitude_hemisphere, longitude, longitude_hemisphere, "
+                 "gps_status, satellites_used, hdop, altitude, geoid_height, differential_time, differential_station_id) "
+                 "VALUES ('%s', '%s', '%c', '%s', '%c', %d, '%s', %.2f, %.2f, %.2f, %.2f, '%s');",
+                 gpgga.utc_time, gpgga.latitude, gpgga.latitude_hemisphere, gpgga.longitude, gpgga.longitude_hemisphere,
+                 gpgga.gps_status, gpgga.satellites_used, gpgga.hdop, gpgga.altitude, gpgga.geoid_height,
+                 gpgga.differential_time, gpgga.differential_station_id);
+
+        // 执行插入语句
+        rc = sqlite3_exec(db, insertSQL, 0, 0, 0);
+        if (rc != SQLITE_OK) {
+            fprintf(stderr, "无法插入数据: %s\n", sqlite3_errmsg(db));
+            sqlite3_close(db);
+            exit(EXIT_FAILURE);
+        }
 
     }
 
